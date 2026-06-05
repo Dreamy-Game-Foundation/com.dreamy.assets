@@ -1,0 +1,16 @@
+{
+    "name": "Dreamy.Assets.Runtime",
+    "rootNamespace": "Dreamy.Assets",
+    "references": [
+        "Unity.Addressables"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

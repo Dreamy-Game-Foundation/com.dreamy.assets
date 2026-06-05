@@ -1,0 +1,21 @@
+{
+  "name": "com.dreamy.assets",
+  "version": "0.1.0",
+  "displayName": "Dreamy Assets",
+  "description": "Simple Addressables asset loader inspired by the local Base.LoadAsset flow: static load, request progress, cache, Resources fallback, and sprite atlas helper.",
+  "unity": "6000.0",
+  "type": "library",
+  "license": "UNLICENSED",
+  "author": {
+    "name": "Dreamy Studio"
+  },
+  "dependencies": {
+    "com.unity.addressables": "2.7.2"
+  },
+  "keywords": [
+    "assets",
+    "addressables",
+    "loading",
+    "dreamy"
+  ]
+}
