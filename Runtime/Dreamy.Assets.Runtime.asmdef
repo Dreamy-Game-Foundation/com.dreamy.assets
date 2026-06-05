@@ -2,7 +2,10 @@
     "name": "Dreamy.Assets.Runtime",
     "rootNamespace": "Dreamy.Assets",
     "references": [
-        "Unity.Addressables"
+        "Dreamy.Core.Runtime",
+        "UniTask",
+        "Unity.Addressables",
+        "Unity.ResourceManager"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

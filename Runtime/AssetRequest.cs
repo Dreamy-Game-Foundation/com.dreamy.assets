@@ -1,6 +1,5 @@
 using System;
-using System.Threading.Tasks;
-using UnityEngine;
+using Cysharp.Threading.Tasks;
 
 namespace Dreamy.Assets
 {
@@ -24,37 +23,37 @@ namespace Dreamy.Assets
         public float Progress => ProgressFunc != null ? ProgressFunc() : 0f;
     }
 
-    public sealed class AssetRequest<TAsset> : AssetRequest where TAsset : Object
+    public sealed class AssetRequest<TAsset> : AssetRequest, IAssetRequest<TAsset> where TAsset : UnityEngine.Object
     {
-        internal AssetRequest(int requestId) : base(requestId)
+        public AssetRequest(int requestId) : base(requestId)
         {
         }
 
         public TAsset Result { get; private set; }
 
-        public Task<TAsset> Task { get; private set; }
+        public UniTask<TAsset> Task { get; private set; }
 
-        internal void SetTask(Task<TAsset> task)
+        void IAssetRequest<TAsset>.SetTask(UniTask<TAsset> task)
         {
             Task = task;
         }
 
-        internal void SetProgressFunc(Func<float> progressFunc)
+        void IAssetRequest<TAsset>.SetProgressFunc(Func<float> progressFunc)
         {
             ProgressFunc = progressFunc;
         }
 
-        internal void SetResult(TAsset result)
+        void IAssetRequest<TAsset>.SetResult(TAsset result)
         {
             Result = result;
         }
 
-        internal void SetStatus(AssetRequestStatus status)
+        void IAssetRequest<TAsset>.SetStatus(AssetRequestStatus status)
         {
             Status = status;
         }
 
-        internal void SetOperationException(Exception ex)
+        void IAssetRequest<TAsset>.SetOperationException(Exception ex)
         {
             OperationException = ex;
         }

@@ -2,14 +2,16 @@
 
 Addressables-based asset loading package for Dreamy internal Unity projects.
 
-The v0.1 API intentionally follows the current project `Assets/_BaseSource/Base.LoadAsset` style: static `AssetLoader`, typed cache, request progress, sprite atlas helper, `Resources` fallback, and scene-change cache cleanup. It removes only project-specific coupling such as `LiveSingleton`, Odin, and UniTask.
+The v0.1 API intentionally follows the current project `Assets/_BaseSource/Base.LoadAsset` style: `LiveSingleton`-backed `AssetLoader`, typed cache, UniTask request progress, sprite atlas helper, `Resources` fallback, and scene-change cache cleanup. It removes Odin and keeps Addressables release safer than the old base implementation.
 
 ## Requirements
 
 - Unity 6000.0+
+- `com.dreamy.core`
+- UniTask
 - `com.unity.addressables`
 
-When using private Git URL packages, keep Addressables in the game template manifest so every project resolves the same version.
+When using private Git URL packages, keep Core, UniTask, and Addressables in the game template manifest so every project resolves the same version.
 
 ## Install
 
@@ -17,6 +19,8 @@ When using private Git URL packages, keep Addressables in the game template mani
 {
   "dependencies": {
     "com.unity.addressables": "2.7.2",
+    "com.cysharp.unitask": "https://github.com/Cysharp/UniTask.git?path=src/UniTask/Assets/Plugins/UniTask",
+    "com.dreamy.core": "https://github.com/Dreamy-Game-Foundation/com.dreamy.core.git#v2.0.0",
     "com.dreamy.assets": "https://github.com/Dreamy-Game-Foundation/com.dreamy.assets.git#v0.1.0"
   }
 }
@@ -39,7 +43,7 @@ AssetRequest<GameObject> request = AssetLoader.RequestAsync<GameObject>("enemy_p
 while (!request.IsDone)
 {
     loadingBar.value = request.Progress;
-    await Task.Yield();
+    await UniTask.Yield();
 }
 
 GameObject prefab = await request.Task;

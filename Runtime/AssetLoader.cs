@@ -1,163 +1,189 @@
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
+using Cysharp.Threading.Tasks;
+using Dreamy.Core;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.U2D;
-using Object = UnityEngine.Object;
 
 namespace Dreamy.Assets
 {
-    public static class AssetLoader
+    public sealed class AssetLoader : LiveSingleton<AssetLoader>
     {
-        private static readonly Dictionary<Type, Dictionary<string, Object>> AssetCached =
-            new Dictionary<Type, Dictionary<string, Object>>();
+        private readonly Dictionary<Type, Dictionary<string, UnityEngine.Object>> assetCached =
+            new Dictionary<Type, Dictionary<string, UnityEngine.Object>>();
 
-        private static readonly Dictionary<Type, Dictionary<string, AssetRequest>> RequestCached =
+        private readonly Dictionary<Type, Dictionary<string, AssetRequest>> requestCached =
             new Dictionary<Type, Dictionary<string, AssetRequest>>();
 
-        private static readonly IAssetLoader AddressableLoader = new AddressableLoader();
-        private static readonly IAssetLoader ResourceLoader = new ResourceLoader();
+        private readonly IAssetLoader addressableLoader = new AddressableLoader();
+        private readonly IAssetLoader resourceLoader = new ResourceLoader();
 
-        static AssetLoader()
+        protected override void Awake()
         {
+            base.Awake();
             SceneManager.activeSceneChanged += OnActiveSceneChanged;
         }
 
-        public static async Task<TAsset> LoadAsync<TAsset>(string address) where TAsset : Object
+        protected override void OnDestroy()
         {
-            EnsureTypeCache<TAsset>();
+            SceneManager.activeSceneChanged -= OnActiveSceneChanged;
+            base.OnDestroy();
+        }
 
-            Dictionary<string, Object> assetsOfType = AssetCached[typeof(TAsset)];
-            Dictionary<string, AssetRequest> requestsOfType = RequestCached[typeof(TAsset)];
+        public static async UniTask<TAsset> LoadAsync<TAsset>(string path) where TAsset : UnityEngine.Object
+        {
+            Type type = typeof(TAsset);
+            Instance.EnsureTypeCache(type);
 
-            if (assetsOfType.TryGetValue(address, out Object cachedAsset))
+            Dictionary<string, UnityEngine.Object> assetsOfType = Instance.assetCached[type];
+            Dictionary<string, AssetRequest> requestsOfType = Instance.requestCached[type];
+
+            if (assetsOfType.TryGetValue(path, out UnityEngine.Object cachedAsset))
             {
                 return (TAsset)cachedAsset;
             }
 
-            if (requestsOfType.TryGetValue(address, out AssetRequest cachedRequest))
+            if (requestsOfType.TryGetValue(path, out AssetRequest cachedRequest))
             {
                 return await ((AssetRequest<TAsset>)cachedRequest).Task;
             }
 
-            AssetRequest<TAsset> request = AddressableLoader.LoadAsync<TAsset>(address);
+            AssetRequest<TAsset> request = Instance.addressableLoader.LoadAsync<TAsset>(path);
             TAsset result = await request.Task;
 
             if (request.Status == AssetRequestStatus.Failed)
             {
                 throw request.OperationException ?? new InvalidOperationException(
-                    $"Failed to load addressable asset. Key: {address}.");
+                    $"Failed to load addressable asset. Key: {path}.");
             }
 
-            assetsOfType[address] = result;
-            requestsOfType[address] = request;
+            if (!assetsOfType.ContainsKey(path))
+            {
+                assetsOfType.Add(path, result);
+                requestsOfType.Add(path, request);
+            }
+
             return result;
         }
 
-        public static AssetRequest<TAsset> RequestAsync<TAsset>(string address) where TAsset : Object
+        public static AssetRequest<TAsset> RequestAsync<TAsset>(string path) where TAsset : UnityEngine.Object
         {
-            EnsureTypeCache<TAsset>();
+            Type type = typeof(TAsset);
+            Instance.EnsureTypeCache(type);
 
-            Dictionary<string, AssetRequest> requestsOfType = RequestCached[typeof(TAsset)];
-            if (requestsOfType.TryGetValue(address, out AssetRequest cachedRequest))
+            Dictionary<string, AssetRequest> requestsOfType = Instance.requestCached[type];
+            if (requestsOfType.TryGetValue(path, out AssetRequest cachedRequest))
             {
                 return (AssetRequest<TAsset>)cachedRequest;
             }
 
-            AssetRequest<TAsset> request = AddressableLoader.LoadAsync<TAsset>(address);
-            requestsOfType[address] = request;
-            CompleteAndCache(address, request);
+            AssetRequest<TAsset> request = Instance.addressableLoader.LoadAsync<TAsset>(path);
+            requestsOfType[path] = request;
+            Instance.CompleteAndCache(path, request);
             return request;
         }
 
-        public static TAsset LoadResource<TAsset>(string address) where TAsset : Object
+        public static TAsset LoadResource<TAsset>(string path) where TAsset : UnityEngine.Object
         {
-            EnsureTypeCache<TAsset>();
+            Type type = typeof(TAsset);
+            Instance.EnsureTypeCache(type);
 
-            Dictionary<string, Object> assetsOfType = AssetCached[typeof(TAsset)];
-            Dictionary<string, AssetRequest> requestsOfType = RequestCached[typeof(TAsset)];
+            Dictionary<string, UnityEngine.Object> assetsOfType = Instance.assetCached[type];
+            Dictionary<string, AssetRequest> requestsOfType = Instance.requestCached[type];
 
-            if (assetsOfType.TryGetValue(address, out Object cachedAsset))
+            if (assetsOfType.TryGetValue(path, out UnityEngine.Object cachedAsset))
             {
                 return (TAsset)cachedAsset;
             }
 
-            AssetRequest<TAsset> request = ResourceLoader.Load<TAsset>(address);
+            AssetRequest<TAsset> request = Instance.resourceLoader.Load<TAsset>(path);
             if (request.Status == AssetRequestStatus.Failed)
             {
                 throw request.OperationException ?? new InvalidOperationException(
-                    $"Failed to load resource asset. Key: {address}.");
+                    $"Failed to load resource asset. Key: {path}.");
             }
 
-            assetsOfType[address] = request.Result;
-            requestsOfType[address] = request;
+            if (!assetsOfType.ContainsKey(path))
+            {
+                assetsOfType.Add(path, request.Result);
+                requestsOfType.Add(path, request);
+            }
+
             return request.Result;
         }
 
-        public static async Task<Sprite> LoadSprite(string atlasAddress, string spriteName)
+        public static async UniTask<Sprite> LoadSprite(string atlasPath, string spriteName)
         {
-            SpriteAtlas atlas = await LoadAsync<SpriteAtlas>(atlasAddress);
-            Sprite sprite = atlas.GetSprite(spriteName);
-
-            if (sprite == null)
+            try
             {
-                Debug.LogError($"Not found sprite: {spriteName} in atlas: {atlasAddress}");
-            }
+                SpriteAtlas atlas = await LoadAsync<SpriteAtlas>(atlasPath);
+                Sprite sprite = atlas.GetSprite(spriteName);
 
-            return sprite;
+                if (sprite == null)
+                {
+                    Debug.LogError($"Not found sprite: {spriteName} in atlas: {atlasPath}");
+                }
+
+                return sprite;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+                Debug.LogError($"Not found sprite: {spriteName} in atlas: {atlasPath}");
+                return null;
+            }
         }
 
-        public static void Unload<TAsset>(string address) where TAsset : Object
+        public static void Unload<TAsset>(string path) where TAsset : UnityEngine.Object
         {
             Type type = typeof(TAsset);
-            if (!RequestCached.TryGetValue(type, out Dictionary<string, AssetRequest> requestsOfType))
+
+            if (!Instance.requestCached.TryGetValue(type, out Dictionary<string, AssetRequest> requestsOfType))
             {
                 return;
             }
 
-            if (!requestsOfType.Remove(address, out AssetRequest request))
+            if (!Instance.assetCached.TryGetValue(type, out Dictionary<string, UnityEngine.Object> assetsOfType))
             {
                 return;
             }
 
-            AddressableLoader.Release(request);
-
-            if (AssetCached.TryGetValue(type, out Dictionary<string, Object> assetsOfType))
+            if (assetsOfType.ContainsKey(path) && requestsOfType.TryGetValue(path, out AssetRequest request))
             {
-                assetsOfType.Remove(address);
+                Instance.addressableLoader.Release(request);
+                assetsOfType.Remove(path);
+                requestsOfType.Remove(path);
             }
         }
 
         public static void UnloadAll()
         {
-            AddressableLoader.ReleaseAll();
-            AssetCached.Clear();
-            RequestCached.Clear();
+            Instance.addressableLoader.ReleaseAll();
+            Instance.assetCached.Clear();
+            Instance.requestCached.Clear();
         }
 
-        private static void EnsureTypeCache<TAsset>() where TAsset : Object
+        private void EnsureTypeCache(Type type)
         {
-            Type type = typeof(TAsset);
-            if (AssetCached.ContainsKey(type))
+            if (assetCached.ContainsKey(type))
             {
                 return;
             }
 
-            AssetCached.Add(type, new Dictionary<string, Object>());
-            RequestCached.Add(type, new Dictionary<string, AssetRequest>());
+            assetCached.Add(type, new Dictionary<string, UnityEngine.Object>());
+            requestCached.Add(type, new Dictionary<string, AssetRequest>());
         }
 
-        private static async void CompleteAndCache<TAsset>(
-            string address,
-            AssetRequest<TAsset> request) where TAsset : Object
+        private async void CompleteAndCache<TAsset>(string path, AssetRequest<TAsset> request)
+            where TAsset : UnityEngine.Object
         {
             try
             {
                 TAsset result = await request.Task;
                 if (request.Status == AssetRequestStatus.Succeeded && result != null)
                 {
-                    AssetCached[typeof(TAsset)][address] = result;
+                    assetCached[typeof(TAsset)][path] = result;
                 }
             }
             catch (Exception ex)
@@ -166,7 +192,7 @@ namespace Dreamy.Assets
             }
         }
 
-        private static void OnActiveSceneChanged(Scene previousActiveScene, Scene newActiveScene)
+        private void OnActiveSceneChanged(Scene previousActiveScene, Scene newActiveScene)
         {
             UnloadAll();
         }

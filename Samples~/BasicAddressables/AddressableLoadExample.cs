@@ -1,4 +1,4 @@
-using System.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 using UnityEngine;
 
 namespace Dreamy.Assets.Samples
@@ -22,7 +22,7 @@ namespace Dreamy.Assets.Samples
             }
         }
 
-        private async Task SpawnAsync()
+        private async UniTask SpawnAsync()
         {
             if (string.IsNullOrWhiteSpace(prefabAddress))
             {

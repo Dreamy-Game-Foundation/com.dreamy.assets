@@ -1,9 +1,7 @@
 using System.Collections.Generic;
-using System.Threading.Tasks;
-using UnityEngine;
+using Cysharp.Threading.Tasks;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
-using Object = UnityEngine.Object;
 
 namespace Dreamy.Assets
 {
@@ -11,38 +9,56 @@ namespace Dreamy.Assets
     {
         private int nextRequestId;
 
-        private readonly Dictionary<int, AsyncOperationHandle> requests =
+        private readonly Dictionary<int, AsyncOperationHandle> requestDict =
             new Dictionary<int, AsyncOperationHandle>();
 
-        public AssetRequest<TAsset> Load<TAsset>(string address) where TAsset : Object
+        public AssetRequest<TAsset> Load<TAsset>(string address) where TAsset : UnityEngine.Object
         {
             int requestId = nextRequestId++;
             AsyncOperationHandle<TAsset> operationHandle = Addressables.LoadAssetAsync<TAsset>(address);
             operationHandle.WaitForCompletion();
-            requests.Add(requestId, operationHandle);
+            requestDict.Add(requestId, operationHandle);
 
             AssetRequest<TAsset> request = new AssetRequest<TAsset>(requestId);
-            ApplyCompletedOperation(request, operationHandle);
-            request.SetTask(Task.FromResult(operationHandle.Result));
-            request.SetProgressFunc(() => operationHandle.IsValid() ? operationHandle.PercentComplete : 1f);
+            IAssetRequest<TAsset> setter = request;
+            setter.SetTask(UniTask.FromResult(operationHandle.Result));
+            setter.SetProgressFunc(() => operationHandle.IsValid() ? operationHandle.PercentComplete : 1f);
+            setter.SetResult(operationHandle.Result);
+            setter.SetStatus(operationHandle.Status == AsyncOperationStatus.Succeeded
+                ? AssetRequestStatus.Succeeded
+                : AssetRequestStatus.Failed);
+            setter.SetOperationException(operationHandle.OperationException);
             return request;
         }
 
-        public AssetRequest<TAsset> LoadAsync<TAsset>(string address) where TAsset : Object
+        public AssetRequest<TAsset> LoadAsync<TAsset>(string address) where TAsset : UnityEngine.Object
         {
             int requestId = nextRequestId++;
             AsyncOperationHandle<TAsset> operationHandle = Addressables.LoadAssetAsync<TAsset>(address);
-            requests.Add(requestId, operationHandle);
+            requestDict.Add(requestId, operationHandle);
 
             AssetRequest<TAsset> request = new AssetRequest<TAsset>(requestId);
-            request.SetTask(CompleteAsync(request, operationHandle));
-            request.SetProgressFunc(() => operationHandle.IsValid() ? operationHandle.PercentComplete : 0f);
+            IAssetRequest<TAsset> setter = request;
+            UniTaskCompletionSource<TAsset> completionSource = new UniTaskCompletionSource<TAsset>();
+
+            setter.SetTask(completionSource.Task);
+            setter.SetProgressFunc(() => operationHandle.IsValid() ? operationHandle.PercentComplete : 0f);
+            operationHandle.Completed += handle =>
+            {
+                setter.SetResult(handle.Result);
+                setter.SetStatus(handle.Status == AsyncOperationStatus.Succeeded
+                    ? AssetRequestStatus.Succeeded
+                    : AssetRequestStatus.Failed);
+                setter.SetOperationException(handle.OperationException);
+                completionSource.TrySetResult(handle.Result);
+            };
+
             return request;
         }
 
         public void Release(AssetRequest request)
         {
-            if (request == null || !requests.Remove(request.RequestId, out AsyncOperationHandle operationHandle))
+            if (request == null || !requestDict.Remove(request.RequestId, out AsyncOperationHandle operationHandle))
             {
                 return;
             }
@@ -55,7 +71,7 @@ namespace Dreamy.Assets
 
         public void ReleaseAll()
         {
-            foreach (AsyncOperationHandle operationHandle in requests.Values)
+            foreach (AsyncOperationHandle operationHandle in requestDict.Values)
             {
                 if (operationHandle.IsValid())
                 {
@@ -63,27 +79,7 @@ namespace Dreamy.Assets
                 }
             }
 
-            requests.Clear();
-        }
-
-        private static async Task<TAsset> CompleteAsync<TAsset>(
-            AssetRequest<TAsset> request,
-            AsyncOperationHandle<TAsset> operationHandle) where TAsset : Object
-        {
-            await operationHandle.Task;
-            ApplyCompletedOperation(request, operationHandle);
-            return operationHandle.Result;
-        }
-
-        private static void ApplyCompletedOperation<TAsset>(
-            AssetRequest<TAsset> request,
-            AsyncOperationHandle<TAsset> operationHandle) where TAsset : Object
-        {
-            request.SetResult(operationHandle.Result);
-            request.SetStatus(operationHandle.Status == AsyncOperationStatus.Succeeded
-                ? AssetRequestStatus.Succeeded
-                : AssetRequestStatus.Failed);
-            request.SetOperationException(operationHandle.OperationException);
+            requestDict.Clear();
         }
     }
 }
