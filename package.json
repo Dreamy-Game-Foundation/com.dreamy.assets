@@ -1,6 +1,6 @@
 {
   "name": "com.dreamy.assets",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "displayName": "Dreamy Assets",
   "description": "Addressables and Resources asset loader adapted from the local Base.LoadAsset flow: LiveSingleton, UniTask requests, cache, progress, and sprite atlas helper.",
   "unity": "6000.0",
@@ -10,7 +10,9 @@
     "name": "Dreamy Studio"
   },
   "dependencies": {
-    "com.unity.addressables": "2.7.2"
+    "com.unity.addressables": "2.7.2",
+    "com.cysharp.unitask": "2.5.10",
+    "com.dreamy.core": "1.1.2"
   },
   "keywords": [
     "assets",

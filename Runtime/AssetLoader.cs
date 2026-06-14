@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
 using Dreamy.Core;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using UnityEngine.U2D;
 
 namespace Dreamy.Assets
@@ -16,20 +15,11 @@ namespace Dreamy.Assets
         private readonly Dictionary<Type, Dictionary<string, AssetRequest>> requestCached =
             new Dictionary<Type, Dictionary<string, AssetRequest>>();
 
+        private readonly Dictionary<Type, Dictionary<string, IAssetLoader>> loaderCached =
+            new Dictionary<Type, Dictionary<string, IAssetLoader>>();
+
         private readonly IAssetLoader addressableLoader = new AddressableLoader();
         private readonly IAssetLoader resourceLoader = new ResourceLoader();
-
-        protected override void Awake()
-        {
-            base.Awake();
-            SceneManager.activeSceneChanged += OnActiveSceneChanged;
-        }
-
-        protected override void OnDestroy()
-        {
-            SceneManager.activeSceneChanged -= OnActiveSceneChanged;
-            base.OnDestroy();
-        }
 
         public static async UniTask<TAsset> LoadAsync<TAsset>(string path) where TAsset : UnityEngine.Object
         {
@@ -46,25 +36,56 @@ namespace Dreamy.Assets
 
             if (requestsOfType.TryGetValue(path, out AssetRequest cachedRequest))
             {
-                return await ((AssetRequest<TAsset>)cachedRequest).Task;
+                AssetRequest<TAsset> typedRequest = (AssetRequest<TAsset>)cachedRequest;
+                TAsset cachedResult = await typedRequest.Task;
+                if (typedRequest.Status == AssetRequestStatus.Failed || cachedResult == null)
+                {
+                    Instance.RemoveRequest(type, path, typedRequest, true);
+                    throw typedRequest.OperationException ?? new InvalidOperationException(
+                        $"Failed to load addressable asset. Key: {path}.");
+                }
+
+                if (!Instance.IsActiveRequest(type, path, typedRequest, requestsOfType))
+                {
+                    throw new OperationCanceledException(
+                        $"Asset request was unloaded before completion. Key: {path}.");
+                }
+
+                return cachedResult;
             }
 
             AssetRequest<TAsset> request = Instance.addressableLoader.LoadAsync<TAsset>(path);
-            TAsset result = await request.Task;
+            requestsOfType[path] = request;
+            Instance.loaderCached[type][path] = Instance.addressableLoader;
 
-            if (request.Status == AssetRequestStatus.Failed)
+            try
             {
-                throw request.OperationException ?? new InvalidOperationException(
-                    $"Failed to load addressable asset. Key: {path}.");
-            }
+                TAsset result = await request.Task;
+                if (request.Status == AssetRequestStatus.Failed || result == null)
+                {
+                    throw request.OperationException ?? new InvalidOperationException(
+                        $"Failed to load addressable asset. Key: {path}.");
+                }
 
-            if (!assetsOfType.ContainsKey(path))
+                if (!Instance.IsActiveRequest(type, path, request, requestsOfType))
+                {
+                    throw new OperationCanceledException(
+                        $"Asset request was unloaded before completion. Key: {path}.");
+                }
+
+                if (requestsOfType.TryGetValue(path, out AssetRequest activeRequest) &&
+                    ReferenceEquals(activeRequest, request))
+                {
+                    assetsOfType[path] = result;
+                }
+
+                return result;
+            }
+            catch
             {
-                assetsOfType.Add(path, result);
-                requestsOfType.Add(path, request);
+                Instance.RemoveRequest(type, path, request, true);
+                throw;
             }
-
-            return result;
         }
 
         public static AssetRequest<TAsset> RequestAsync<TAsset>(string path) where TAsset : UnityEngine.Object
@@ -80,6 +101,7 @@ namespace Dreamy.Assets
 
             AssetRequest<TAsset> request = Instance.addressableLoader.LoadAsync<TAsset>(path);
             requestsOfType[path] = request;
+            Instance.loaderCached[type][path] = Instance.addressableLoader;
             Instance.CompleteAndCache(path, request);
             return request;
         }
@@ -97,6 +119,12 @@ namespace Dreamy.Assets
                 return (TAsset)cachedAsset;
             }
 
+            if (requestsOfType.ContainsKey(path))
+            {
+                throw new InvalidOperationException(
+                    $"Asset key '{path}' is already being loaded asynchronously as {type.Name}.");
+            }
+
             AssetRequest<TAsset> request = Instance.resourceLoader.Load<TAsset>(path);
             if (request.Status == AssetRequestStatus.Failed)
             {
@@ -108,6 +136,7 @@ namespace Dreamy.Assets
             {
                 assetsOfType.Add(path, request.Result);
                 requestsOfType.Add(path, request);
+                Instance.loaderCached[type].Add(path, Instance.resourceLoader);
             }
 
             return request.Result;
@@ -144,24 +173,19 @@ namespace Dreamy.Assets
                 return;
             }
 
-            if (!Instance.assetCached.TryGetValue(type, out Dictionary<string, UnityEngine.Object> assetsOfType))
+            if (requestsOfType.TryGetValue(path, out AssetRequest request))
             {
-                return;
-            }
-
-            if (assetsOfType.ContainsKey(path) && requestsOfType.TryGetValue(path, out AssetRequest request))
-            {
-                Instance.addressableLoader.Release(request);
-                assetsOfType.Remove(path);
-                requestsOfType.Remove(path);
+                Instance.RemoveRequest(type, path, request, true);
             }
         }
 
         public static void UnloadAll()
         {
             Instance.addressableLoader.ReleaseAll();
+            Instance.resourceLoader.ReleaseAll();
             Instance.assetCached.Clear();
             Instance.requestCached.Clear();
+            Instance.loaderCached.Clear();
         }
 
         private void EnsureTypeCache(Type type)
@@ -173,6 +197,7 @@ namespace Dreamy.Assets
 
             assetCached.Add(type, new Dictionary<string, UnityEngine.Object>());
             requestCached.Add(type, new Dictionary<string, AssetRequest>());
+            loaderCached.Add(type, new Dictionary<string, IAssetLoader>());
         }
 
         private async void CompleteAndCache<TAsset>(string path, AssetRequest<TAsset> request)
@@ -183,18 +208,64 @@ namespace Dreamy.Assets
                 TAsset result = await request.Task;
                 if (request.Status == AssetRequestStatus.Succeeded && result != null)
                 {
-                    assetCached[typeof(TAsset)][path] = result;
+                    Type type = typeof(TAsset);
+                    if (requestCached.TryGetValue(
+                            type,
+                            out Dictionary<string, AssetRequest> requestsOfType) &&
+                        IsActiveRequest(type, path, request, requestsOfType))
+                    {
+                        assetCached[type][path] = result;
+                    }
+
+                    return;
                 }
+
+                RemoveRequest(typeof(TAsset), path, request, true);
             }
             catch (Exception ex)
             {
+                RemoveRequest(typeof(TAsset), path, request, true);
                 Debug.LogException(ex);
             }
         }
 
-        private void OnActiveSceneChanged(Scene previousActiveScene, Scene newActiveScene)
+        private void RemoveRequest(
+            Type type,
+            string path,
+            AssetRequest expectedRequest,
+            bool release)
         {
-            UnloadAll();
+            if (!requestCached.TryGetValue(type, out Dictionary<string, AssetRequest> requestsOfType) ||
+                !requestsOfType.TryGetValue(path, out AssetRequest activeRequest) ||
+                !ReferenceEquals(activeRequest, expectedRequest))
+            {
+                return;
+            }
+
+            if (release &&
+                loaderCached.TryGetValue(type, out Dictionary<string, IAssetLoader> loadersOfType) &&
+                loadersOfType.TryGetValue(path, out IAssetLoader loader))
+            {
+                loader.Release(activeRequest);
+            }
+
+            requestsOfType.Remove(path);
+            assetCached[type].Remove(path);
+            loaderCached[type].Remove(path);
+        }
+
+        private bool IsActiveRequest(
+            Type type,
+            string path,
+            AssetRequest request,
+            Dictionary<string, AssetRequest> expectedTypeCache)
+        {
+            return requestCached.TryGetValue(
+                       type,
+                       out Dictionary<string, AssetRequest> currentTypeCache) &&
+                   ReferenceEquals(currentTypeCache, expectedTypeCache) &&
+                   currentTypeCache.TryGetValue(path, out AssetRequest activeRequest) &&
+                   ReferenceEquals(activeRequest, request);
         }
     }
 }

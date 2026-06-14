@@ -2,7 +2,7 @@
 
 Addressables-based asset loading package for Dreamy internal Unity projects.
 
-The v0.1 API intentionally follows the current project `Assets/_BaseSource/Base.LoadAsset` style: `LiveSingleton`-backed `AssetLoader`, typed cache, UniTask request progress, sprite atlas helper, `Resources` fallback, and scene-change cache cleanup. It removes Odin and keeps Addressables release safer than the old base implementation.
+The API provides a `LiveSingleton`-backed `AssetLoader`, typed cache, UniTask request progress, sprite atlas helpers, and a `Resources` fallback. Concurrent requests for the same type and key share one in-flight operation.
 
 ## Requirements
 
@@ -65,9 +65,9 @@ TweenSettings settings = AssetLoader.LoadResource<TweenSettings>("TweenBaseSetti
 
 - `LoadAsync<T>` caches Addressables assets by type and address.
 - `LoadResource<T>` caches `Resources` assets by type and address.
-- `Unload<T>(address)` releases one Addressables asset.
+- `Unload<T>(address)` releases one asset through the loader that owns it.
 - `UnloadAll()` releases all Addressables assets and clears cache.
-- Cache is automatically cleared when active scene changes.
+- Scene changes do not implicitly clear the cache. The caller owns asset lifetime and must unload explicitly.
 - Instantiated prefabs are normal Unity instances; destroy them with `Destroy(instance)`.
 - Do not call `Resources.UnloadUnusedAssets()` from gameplay hot paths.
 
