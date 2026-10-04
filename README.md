@@ -1,76 +1,68 @@
-# com.dreamy.assets
+# Dreamy Assets
 
-Addressables-based asset loading package for Dreamy internal Unity projects.
+Package thuộc Dreamy Game Studio. Hướng dẫn dưới đây mô tả cấu trúc, cách cài vào project và tích hợp ở root/scene.
 
-The API provides a `LiveSingleton`-backed `AssetLoader`, typed cache, UniTask request progress, sprite atlas helpers, and a `Resources` fallback. Concurrent requests for the same type and key share one in-flight operation.
+## Cài package
 
-## Requirements
+Dùng Unity 6000.0 trở lên. Sandbox đã tham chiếu package bằng `file:../LocalPackages/com.dreamy.assets`. Project khác dùng Package Manager > + > Install package from disk và chọn package.json, hoặc Git URL của repository nội bộ. Cài cả dependency Dreamy/Git vào manifest của game; version dependency không tự cấu hình registry riêng.
 
-- Unity 6000.0+
-- `com.dreamy.core`
-- UniTask
-- `com.unity.addressables`
+Dependency trực tiếp theo package.json:
 
-When using private Git URL packages, keep Core, UniTask, and Addressables in the game template manifest so every project resolves the same version.
+- `com.unity.addressables` (2.7.2)
+- `com.cysharp.unitask` (2.5.10)
+- `com.dreamy.core` (1.1.2)
 
-## Install
+## Cấu trúc và asmdef
 
-```json
+| Assembly | Reference | Phạm vi |
+| --- | --- | --- |
+| `Dreamy.Assets.Editor` |  | Chỉ Editor |
+| `Dreamy.Assets.Runtime` | Dreamy.Core.Runtime, UniTask, Unity.Addressables, Unity.ResourceManager | Runtime |
+
+Trong asmdef của game, thêm assembly chứa API trực tiếp sử dụng. Code bootstrap reference thêm Core/DataConfig/Datasave/Economy theo nhu cầu; code async reference UniTask. Code gọi type sample reference assembly sample. Giữ Editor reference trong asmdef Editor-only.
+
+## Khởi tạo và tải asset
+
+Runtime chứa AssetLoader và request/cache; Editor hỗ trợ thao tác trong Unity. AssetLoader dùng singleton, không có bước đăng ký installer riêng trong GameInstaller. Root quyết định thời điểm tải và giải phóng asset.
+
+```csharp
+using Dreamy.Assets;
+using UnityEngine;
+
+// Trong method async UniTask.
+GameObject prefab = await AssetLoader.LoadAsync<GameObject>(
+    PanelAddress.Home);
+GameObject instance = Object.Instantiate(prefab, canvasTransform);
+// Khi đã kết thúc mọi consumer:
+Object.Destroy(instance);
+AssetLoader.Unload<GameObject>(PanelAddress.Home);
+```
+
+canvasTransform là Transform Canvas của game. LoadAsync cache theo type/address và chia sẻ request đang chạy. Instance do Instantiate tạo phải Destroy riêng. Không unload prefab khi còn instance/consumer cần asset. Đổi scene không tự xóa cache; UnloadAll dành cho lúc kết thúc toàn bộ consumer.
+
+RequestAsync<T> trả request có Progress, IsDone và Task để hiển thị tiến độ. LoadSprite(atlasAddress, spriteName) tải sprite từ atlas. LoadResource<T>(path) dùng key Resources không có phần mở rộng; đây là API riêng, không tự thay cho address sai.
+## Sample
+
+Manifest hiện không khai báo sample để import qua Package Manager.
+
+## Addressables Group và class address
+
+1. Lưu prefab/variant của game tại Assets/_Project/Prefabs/Panel/HomePanel.prefab. Với UIPanel, root phải có subclass tương ứng.
+2. Mở Window > Asset Management > Addressables > Groups; tạo settings nếu chưa có.
+3. Tạo group UI Panels và kéo prefab vào group.
+4. Đặt cột Address thành Panel/HomePanel.prefab.
+5. Tạo class dùng chung trong game:
+
+```csharp
+public static class PanelAddress
 {
-  "dependencies": {
-    "com.unity.addressables": "2.7.2",
-    "com.cysharp.unitask": "https://github.com/Cysharp/UniTask.git?path=src/UniTask/Assets/Plugins/UniTask",
-    "com.dreamy.core": "https://github.com/Dreamy-Game-Foundation/com.dreamy.core.git#v2.0.0",
-    "com.dreamy.assets": "https://github.com/Dreamy-Game-Foundation/com.dreamy.assets.git#v0.1.0"
-  }
+    public const string Home = "Panel/HomePanel.prefab";
+    public const string Current = "Panel/HomePanel.prefab";
 }
 ```
 
-## Usage
+Đường dẫn asset trên disk và address là hai giá trị riêng. Address do bạn đặt, constant phải khớp chính xác cột Address. Tên group không phải key tải. HomePanel là ví dụ subclass do game tự tạo.
 
-```csharp
-AudioClip clip = await AssetLoader.LoadAsync<AudioClip>("sfx_click");
-audioSource.PlayOneShot(clip);
+Dùng AssetLoader.LoadAsync<GameObject>(PanelAddress.Current), instantiate dưới Canvas rồi bind integration. Nếu dùng PanelManager, cài thêm Dreamy UI; Assets không tự quản lý presenter hay animation.
 
-GameObject prefab = await AssetLoader.LoadAsync<GameObject>("enemy_prefab");
-GameObject instance = Object.Instantiate(prefab, spawnPoint.position, spawnPoint.rotation);
-```
-
-Use the request form when a loading UI needs progress:
-
-```csharp
-AssetRequest<GameObject> request = AssetLoader.RequestAsync<GameObject>("enemy_prefab");
-while (!request.IsDone)
-{
-    loadingBar.value = request.Progress;
-    await UniTask.Yield();
-}
-
-GameObject prefab = await request.Task;
-```
-
-Load sprites from an addressable atlas:
-
-```csharp
-Sprite icon = await AssetLoader.LoadSprite("resource_atlas", "Gold");
-```
-
-Load old `Resources` assets when migrating gradually:
-
-```csharp
-TweenSettings settings = AssetLoader.LoadResource<TweenSettings>("TweenBaseSettings");
-```
-
-## Ownership Rules
-
-- `LoadAsync<T>` caches Addressables assets by type and address.
-- `LoadResource<T>` caches `Resources` assets by type and address.
-- `Unload<T>(address)` releases one asset through the loader that owns it.
-- `UnloadAll()` releases all Addressables assets and clears cache.
-- Scene changes do not implicitly clear the cache. The caller owns asset lifetime and must unload explicitly.
-- Instantiated prefabs are normal Unity instances; destroy them with `Destroy(instance)`.
-- Do not call `Resources.UnloadUnusedAssets()` from gameplay hot paths.
-
-## Scope
-
-This package owns runtime asset loading. Project templates own dependency version wiring, Addressables group setup, labels, profiles, and remote content policy.
+Build Addressables content cho target trước khi thử player. AssetLoader cache prefab; đóng panel không tự unload cache. Chỉ unload sau khi mọi instance/consumer đã kết thúc.
